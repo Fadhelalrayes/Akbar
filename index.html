@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>مدار الخبر | متجددة لحظة بلحظة</title>
-  <meta name="description" content="مدار الخبر — صفحة أخبار عربية متجددة لحظة بلحظة.">
+  <meta name="description" content="مدار الخبر — صفحة أخبار عربية متجددة لحظة بلحظة، تعرض النص كاملاً بدون روابط.">
   <meta name="theme-color" content="#0ea5e9">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -14,13 +14,20 @@
     .article h3{font-size:1.25rem;font-weight:800;margin-bottom:6px}
     .article p{text-align:justify;font-size:1rem;margin-top:6px;white-space:pre-line}
     .clock{font-variant-numeric:tabular-nums}
+    .chip{padding:.45rem .8rem;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-weight:600;font-size:.85rem}
+    .chip.active{background:linear-gradient(180deg,#0ea5e9,#0284c7);color:#fff;border-color:transparent}
+    .more-btn{display:inline-flex;align-items:center;gap:.4rem;font-size:.85rem;padding:.4rem .7rem;border-radius:10px;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3}
+    .more-btn:hover{filter:brightness(0.98)}
+    .more-btn svg{width:16px;height:16px}
+    .dev-link{cursor:pointer;color:#0369a1;font-weight:600}
+    .dev-link:hover{text-decoration:underline}
   </style>
 </head>
 <body>
 
 <!-- HEADER -->
 <header class="bg-white/90 backdrop-blur sticky top-0 z-50 border-b border-slate-100">
-  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#0ea5e9,#6366f1);box-shadow:0 6px 16px rgba(14,165,233,.35)"></div>
       <div>
@@ -33,17 +40,18 @@
 </header>
 
 <!-- MAIN -->
-<main class="max-w-5xl mx-auto px-4 py-6">
+<main class="max-w-6xl mx-auto px-4 py-6">
   <!-- شارة تنبيه بالتحديث التلقائي -->
   <div class="mb-4 text-[13px] text-sky-800 bg-sky-100 border border-sky-200 rounded-lg px-3 py-2">
     📡 يتم تحديث الأخبار تلقائيًا كل دقيقة
   </div>
 
-  <h2 class="text-xl font-bold mb-4">آخر الأخبار</h2>
+  <!-- فلاتر الأقسام -->
+  <div id="filters" class="flex flex-wrap gap-2 mb-5"></div>
 
-  <div id="newsList" class="space-y-6"></div>
+  <div id="newsList" class="grid gap-6 sm:grid-cols-1 lg:grid-cols-2"></div>
 
-  <div class="flex justify-center mt-6">
+  <div class="flex justify-center mt-8">
     <button id="loadMore" class="px-5 py-2 rounded-xl bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed">
       تحميل المزيد
     </button>
@@ -55,60 +63,104 @@
   © <span id="year"></span> مدار الخبر — جميع الحقوق محفوظة.
 </footer>
 <div class="text-center text-xs opacity-80 -mt-6 mb-8">
-  برمجة و تطوير : فاضل الريس
+  <span class="dev-link" onclick="openWhatsApp()">برمجة و تطوير : فاضل الريس</span>
 </div>
 
 <script>
 // ===== إعدادات =====
-const FEEDS = [
-  // بحرينية
-  "https://feeds.feedburner.com/alayam-news-list-all",
-  "https://alwatannews.net/rssFeed/0",
-  "https://bahrainmirror.com/rss.xml",
-  // عامة
-  "https://feeds.bbci.co.uk/arabic/rss.xml",
-  "https://www.france24.com/ar/rss",
-  "https://www.skynewsarabia.com/rss",
-  "https://arabic.cnn.com/rss",
-  "https://arabic.rt.com/rss/"
+// مصادر بحرينية
+const FEEDS_BH = [
+  "https://feeds.feedburner.com/alayam-news-list-all", // الأيام
+  "https://alwatannews.net/rssFeed/0",                  // الوطن
+  "https://bahrainmirror.com/rss.xml"                  // بحرين ميرور
 ];
+// مصادر عربية عامة (بدون سكاي نيوز)
+const FEEDS_AR = [
+  "https://www.aljazeera.net/xml/rss/all.xml", // الجزيرة
+  "https://www.alarabiya.net/.mrss/ar.xml",    // العربية
+  "https://feeds.bbci.co.uk/arabic/rss.xml",   // BBC عربي
+  "https://www.france24.com/ar/rss",           // France24 عربي
+  "https://arabic.cnn.com/rss",                // CNN عربي
+  "https://arabic.rt.com/rss/"                 // RT عربي
+];
+const FEEDS = [...FEEDS_BH, ...FEEDS_AR];
+
+// بروكسيات لتجاوز CORS (نجربها بالتسلسل)
 const PROXIES = [
-  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, // JSON
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`            // XML
 ];
-// ✅ تحديث تلقائي كل دقيقة
+
+// تحديث تلقائي كل دقيقة
 const AUTO_REFRESH_MIN = 1;
 
-const state={all:[],page:0,pageSize:10};
-const $=s=>document.querySelector(s);
+// أقسام وفلاتر
+const SECTIONS = ["الكل","عاجل","سياسة","اقتصاد","رياضة","تقنية","فن وثقافة","صحة","علوم","محليات البحرين"];
+const state = { all: [], filtered: [], page: 0, pageSize: 10, section: "الكل" };
 
-function stripHtml(h){const d=document.createElement("div");d.innerHTML=h;return d.textContent||"";}
+const $ = s => document.querySelector(s);
+
+function stripHtml(h){const d=document.createElement("div");d.innerHTML=h;return (d.textContent||"").trim();}
 function hasAr(t){return /[\u0600-\u06FF]/.test(t||"");}
 function fmt(t){const d=new Date(t);if(isNaN(d))return"";return d.toLocaleString('ar-EG',{dateStyle:'medium',timeStyle:'short'});}
+
+// تصنيف بسيط بالكلمات المفتاحية
+function classify(title="", body=""){
+  const t = `${title} ${body}`;
+  const rules = [
+    ["عاجل", ["عاجل","كسر"]],
+    ["سياسة", ["حكومة","انتخابات","رئاسة","سياسة","برلمان","حزب","وزارة","قانون"]],
+    ["اقتصاد", ["اقتصاد","بورصة","سهم","عملة","نفط","بنك","استثمار","تضخم","عجز"]],
+    ["رياضة", ["رياضة","مباراة","لاعب","دوري","كأس","نادي","مدرب","أولمبياد"]],
+    ["تقنية", ["تقنية","تكنولوجيا","ذكاء اصطناعي","هاتف","برمجيات","كمبيوتر"]],
+    ["صحة",   ["صحة","وباء","لقاح","طبيب","سرطان","دواء","مستشفى"]],
+    ["فن وثقافة", ["فن","سينما","دراما","مسلسل","حفلة","موسيقى","ثقافة","مسرح","نجوم"]],
+    ["علوم", ["اكتشاف","بحث","علم","فضاء","ناسا","علماء"]],
+    ["محليات البحرين", ["البحرين","المنامة","المحرق","سيهات","الرفاع","سترة","وزارة الصحة البحرينية","مجلس النواب البحريني","BNA","الأيام","الوطن"]]
+  ];
+  for(const [sec,keys] of rules){
+    if(keys.some(k => t.includes(k))) return sec;
+  }
+  return "الكل";
+}
 
 // ساعة حية
 function startClock(){
   const el=$("#liveClock");
-  function tick(){el.textContent=new Date().toLocaleTimeString('ar-BH',{hour12:false});}
-  tick();setInterval(tick,1000);
+  function tick(){ el.textContent=new Date().toLocaleTimeString('ar-BH',{hour12:false}); }
+  tick(); setInterval(tick,1000);
+}
+
+// فتح واتساب عند الضغط على النص السفلي
+function openWhatsApp(){
+  const link="https://api.whatsapp.com/send/?phone=97333375858&type=phone_number&app_absent=0";
+  window.open(link,"_blank","noopener");
 }
 
 async function fetchFeed(u){
   for(const p of PROXIES){
     try{
-      const res=await fetch(p(u)); if(!res.ok) continue;
+      const res=await fetch(p(u), {cache:"no-store"}); if(!res.ok) continue;
       if(p(u).includes("rss2json")){
-        const js=await res.json(); if(!js.items) continue;
-        return js.items.map(it=>({title:it.title,full:stripHtml(it.content||it.description||""),time:it.pubDate}));
+        const js=await res.json(); if(!js || !Array.isArray(js.items)) continue;
+        return js.items.map(it=>({
+          title:(it.title||"").trim(),
+          full: stripHtml((it.content||it.description||"").trim()),
+          time: it.pubDate || it.pubdate || ""
+        }));
       }
       const txt=await res.text();
       const doc=new DOMParser().parseFromString(txt,"text/xml");
       return [...doc.querySelectorAll("item,entry")].map(it=>({
         title:(it.querySelector("title")?.textContent||"").trim(),
-        full:stripHtml((it.querySelector("content\\:encoded")?.textContent||it.querySelector("description")?.textContent||it.querySelector("summary")?.textContent||"").trim()),
+        full: stripHtml(
+          (it.querySelector("content\\:encoded")?.textContent ||
+           it.querySelector("description")?.textContent       ||
+           it.querySelector("summary")?.textContent           || "").trim()
+        ),
         time:(it.querySelector("pubDate")?.textContent||it.querySelector("updated")?.textContent||"")
       }));
-    }catch(e){continue;}
+    }catch(e){/* جرّب البروكسي التالي */}
   }
   return [];
 }
@@ -117,40 +169,97 @@ async function loadAll(){
   let all=[];
   for(const f of FEEDS){
     const items=await fetchFeed(f);
-    all=[...all,...items.filter(i=>hasAr(i.title)||hasAr(i.full))];
+    all = all.concat(items.filter(i=>hasAr(i.title)||hasAr(i.full)));
   }
-  // إزالة التكرار
-  const seen=new Set(),uniq=[];
+  // صنّف وأزل التكرار
+  const seen=new Set(), uniq=[];
   for(const it of all){
-    const k=(it.title||"")+"|"+(it.full||"").slice(0,100);
-    if(seen.has(k)) continue;
-    seen.add(k); uniq.push(it);
+    const sec = classify(it.title, it.full);
+    const obj = {...it, section: sec};
+    const key=(obj.title||"")+"|"+(obj.full||"").slice(0,130);
+    if(seen.has(key)) continue;
+    seen.add(key); uniq.push(obj);
   }
   // ترتيب بالأحدث ثم الطول
-  uniq.sort((a,b)=> (Date.parse(b.time)||0)-(Date.parse(a.time)||0) || ((b.full||"").length-(a.full||"").length) );
-  state.all=uniq; state.page=0; render(true);
+  uniq.sort((a,b)=> (Date.parse(b.time)||0)-(Date.parse(a.time)||0) || ((b.full||"").length - (a.full||"").length));
+  state.all=uniq;
+  applyFilter(true);
 }
 
-function articleHTML(a){
-  return `<div class="article">
-    <h3>${a.title||""}</h3>
-    <div class="text-xs text-slate-500 mb-2">${a.time?fmt(a.time):""}</div>
-    <p>${a.full||""}</p>
-  </div>`;
+// فلاتر الواجهة
+function renderFilters(){
+  const wrap = $("#filters");
+  wrap.innerHTML = SECTIONS.map(s => `<button class="chip ${s===state.section?'active':''}" data-sec="${s}">${s}</button>`).join("");
+  wrap.querySelectorAll("button[data-sec]").forEach(btn=>{
+    btn.onclick = () => { state.section=btn.dataset.sec; applyFilter(true); renderFilters(); };
+  });
 }
-function render(reset){
+
+function applyFilter(reset=false){
   if(reset) state.page=0;
-  const end=(state.page+1)*state.pageSize;
-  const list=state.all.slice(0,end);
-  $("#newsList").innerHTML=list.map(articleHTML).join("");
-  $("#loadMore").disabled=end>=state.all.length;
+  if(state.section==="الكل") state.filtered = [...state.all];
+  else state.filtered = state.all.filter(x => x.section===state.section);
+  renderList();
 }
 
-$("#loadMore").onclick=()=>{state.page++;render(false);}
-$("#year").textContent=new Date().getFullYear();
+// قصّ نص لعرض مقتطف + «قراءة المزيد»
+function excerpt(txt, limit=380){
+  if(!txt) return "";
+  return txt.length<=limit ? txt : txt.slice(0, limit);
+}
 
-// تشغيل
+// بطاقة خبر مع زر «قراءة المزيد»
+function articleHTML(a, expanded=false){
+  const id = btoa((a.title||"")+(a.time||"")).slice(0,16);
+  const shown = expanded ? (a.full||"") : excerpt(a.full||"");
+  const moreLabel = expanded ? "إخفاء" : "قراءة المزيد";
+  const icon = expanded
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>`;
+  return `
+    <article class="article" data-id="${id}">
+      <div class="text-xs text-slate-500 mb-1">${a.time?fmt(a.time):""} • <span class="rounded-full px-2 py-0.5 bg-slate-100">${a.section||"—"}</span></div>
+      <h3>${a.title||""}</h3>
+      <p class="content" data-full="${encodeURIComponent(a.full||"")}" data-expanded="${expanded?'1':'0'}">${shown}</p>
+      ${(a.full && a.full.length>380) ? `
+        <button class="more-btn mt-3" data-act="toggle" aria-label="${moreLabel}">
+          ${icon}<span>${moreLabel}</span>
+        </button>` : ``}
+    </article>`;
+}
+
+function renderList(){
+  const end = (state.page+1)*state.pageSize;
+  const list = state.filtered.slice(0, end);
+  $("#newsList").innerHTML = list.map(a => articleHTML(a,false)).join("");
+  $("#loadMore").disabled = end >= state.filtered.length;
+  $("#loadMore").textContent = end >= state.filtered.length ? "لا مزيد من الأخبار" : "تحميل المزيد";
+}
+
+// تفويض زر «قراءة المزيد»
+document.addEventListener("click",(e)=>{
+  const btn=e.target.closest("button.more-btn"); if(!btn) return;
+  const art=btn.closest("article"); const p=art.querySelector(".content");
+  const expanded=p.getAttribute("data-expanded")==="1";
+  const full=decodeURIComponent(p.getAttribute("data-full")||"");
+  if(expanded){
+    p.textContent=excerpt(full);
+    p.setAttribute("data-expanded","0");
+    btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg><span>قراءة المزيد</span>`;
+  }else{
+    p.textContent=full;
+    p.setAttribute("data-expanded","1");
+    btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg><span>إخفاء</span>`;
+  }
+});
+
+function renderMore(){ state.page++; renderList(); }
+
+/* تشغيل */
+$("#year").textContent = new Date().getFullYear();
+$("#loadMore").onclick = renderMore;
 startClock();
+renderFilters();
 loadAll();
 setInterval(loadAll, AUTO_REFRESH_MIN*60*1000);
 </script>
