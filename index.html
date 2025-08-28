@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>مدار الخبر | متجددة لحظة بلحظة</title>
-  <meta name="description" content="مدار الخبر — صفحة أخبار عربية متجددة لحظة بلحظة بدون روابط أو أسماء وكالات.">
+  <meta name="description" content="مدار الخبر — صفحة أخبار عربية متجددة لحظة بلحظة.">
   <meta name="theme-color" content="#0ea5e9">
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,9 +13,6 @@
     .article{background:#fff;padding:20px;border-radius:16px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
     .article h3{font-size:1.25rem;font-weight:800;margin-bottom:6px}
     .article p{text-align:justify;font-size:1rem;margin-top:6px;white-space:pre-line}
-    .ticker{overflow:hidden;white-space:nowrap;background:#0ea5e9;color:#fff}
-    .ticker__track{display:inline-block;padding-left:100%;animation:marquee 26s linear infinite}
-    @keyframes marquee{0%{transform:translateX(0)}100%{transform:translateX(-100%)}}
     .clock{font-variant-numeric:tabular-nums}
   </style>
 </head>
@@ -28,21 +25,21 @@
       <div style="width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#0ea5e9,#6366f1);box-shadow:0 6px 16px rgba(14,165,233,.35)"></div>
       <div>
         <div class="text-2xl font-extrabold bg-gradient-to-r from-sky-500 to-indigo-500 text-transparent bg-clip-text">مدار الخبر</div>
-        <div id="lastUpdated" class="text-xs text-slate-500">—</div>
       </div>
     </div>
-    <!-- ساعة صغيرة وأنيقة -->
-    <div class="clock text-sm px-2 py-1 rounded-lg bg-slate-100 text-slate-700" id="liveClock" aria-label="الوقت الآن">--:--:--</div>
+    <!-- ساعة حية صغيرة -->
+    <div class="clock text-sm px-2 py-1 rounded-lg bg-slate-100 text-slate-700" id="liveClock">--:--:--</div>
   </div>
-  <div class="ticker text-sm"><div class="ticker__track py-2" id="tickerTrack">مدار الخبر — أخبار عربية متجددة لحظة بلحظة…</div></div>
 </header>
 
 <!-- MAIN -->
 <main class="max-w-5xl mx-auto px-4 py-6">
-  <div class="flex items-center justify-between mb-4">
-    <h2 class="text-xl font-bold">آخر الأخبار (متجددة)</h2>
-    <div id="status" class="text-xs text-slate-500"></div>
+  <!-- شارة تنبيه بالتحديث التلقائي -->
+  <div class="mb-4 text-[13px] text-sky-800 bg-sky-100 border border-sky-200 rounded-lg px-3 py-2">
+    📡 يتم تحديث الأخبار تلقائيًا كل دقيقة
   </div>
+
+  <h2 class="text-xl font-bold mb-4">آخر الأخبار</h2>
 
   <div id="newsList" class="space-y-6"></div>
 
@@ -62,157 +59,100 @@
 </div>
 
 <script>
-/* =================== الإعدادات =================== */
-// مصادر RSS (عامة + بحرينية)
+// ===== إعدادات =====
 const FEEDS = [
   // بحرينية
   "https://feeds.feedburner.com/alayam-news-list-all",
   "https://alwatannews.net/rssFeed/0",
   "https://bahrainmirror.com/rss.xml",
-  // عربية عامة
+  // عامة
   "https://feeds.bbci.co.uk/arabic/rss.xml",
   "https://www.france24.com/ar/rss",
   "https://www.skynewsarabia.com/rss",
   "https://arabic.cnn.com/rss",
   "https://arabic.rt.com/rss/"
 ];
-
-// بروكسيات لتجاوز CORS (نجربها بالتسلسل)
 const PROXIES = [
-  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, // JSON مباشر
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,           // XML خام
-  u => `https://r.jina.ai/http://r.jina.ai/${encodeURIComponent(u)}`            // احتياطي
+  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
 ];
+// ✅ تحديث تلقائي كل دقيقة
+const AUTO_REFRESH_MIN = 1;
 
-// إعداد التحديث التلقائي (بالدقائق)
-const AUTO_REFRESH_MIN = 3;
+const state={all:[],page:0,pageSize:10};
+const $=s=>document.querySelector(s);
 
-/* =================== أدوات مساعدة =================== */
-const $ = sel => document.querySelector(sel);
-const stripHtml = (h) => { const d = document.createElement("div"); d.innerHTML = h; return (d.textContent||"").trim(); };
-const hasAr = t => /[\u0600-\u06FF]/.test(t||"");
-function fmt(isoOrStr){
-  const d = new Date(isoOrStr);
-  if (isNaN(d)) return "";
-  return d.toLocaleString('ar-EG',{dateStyle:'medium',timeStyle:'short'});
-}
+function stripHtml(h){const d=document.createElement("div");d.innerHTML=h;return d.textContent||"";}
+function hasAr(t){return /[\u0600-\u06FF]/.test(t||"");}
+function fmt(t){const d=new Date(t);if(isNaN(d))return"";return d.toLocaleString('ar-EG',{dateStyle:'medium',timeStyle:'short'});}
 
-/* =================== الساعة الحية =================== */
+// ساعة حية
 function startClock(){
-  const el = $("#liveClock");
-  function tick(){
-    const now = new Date();
-    el.textContent = now.toLocaleTimeString('ar-BH', { hour12:false });
-  }
-  tick();
-  setInterval(tick, 1000);
+  const el=$("#liveClock");
+  function tick(){el.textContent=new Date().toLocaleTimeString('ar-BH',{hour12:false});}
+  tick();setInterval(tick,1000);
 }
 
-/* =================== جلب وتحليل =================== */
-async function fetchViaProxies(url){
+async function fetchFeed(u){
   for(const p of PROXIES){
     try{
-      const endpoint = p(url);
-      const res = await fetch(endpoint, { cache: "no-store" });
-      if (!res.ok) continue;
-      // rss2json يرجّع JSON
-      if (endpoint.includes("rss2json")) {
-        const js = await res.json();
-        if (!js || !Array.isArray(js.items)) continue;
-        return js.items.map(it => ({
-          title: (it.title||"").trim(),
-          full: stripHtml((it.content||it.description||"").trim()),
-          time: it.pubDate || it.pubdate || ""
-        }));
+      const res=await fetch(p(u)); if(!res.ok) continue;
+      if(p(u).includes("rss2json")){
+        const js=await res.json(); if(!js.items) continue;
+        return js.items.map(it=>({title:it.title,full:stripHtml(it.content||it.description||""),time:it.pubDate}));
       }
-      // غير ذلك: XML
-      const txt = await res.text();
-      const doc = new DOMParser().parseFromString(txt, "text/xml");
-      const arr = Array.from(doc.querySelectorAll("item,entry")).map(el => {
-        const title = (el.querySelector("title")?.textContent||"").trim();
-        const full = stripHtml(
-          (el.querySelector("content\\:encoded")?.textContent ||
-           el.querySelector("description")?.textContent       ||
-           el.querySelector("summary")?.textContent           || "").trim()
-        );
-        const pub  = (el.querySelector("pubDate")?.textContent || el.querySelector("updated")?.textContent || "").trim();
-        return { title, full, time: pub };
-      });
-      return arr;
-    }catch(e){ /* جرّب البروكسي التالي */ }
+      const txt=await res.text();
+      const doc=new DOMParser().parseFromString(txt,"text/xml");
+      return [...doc.querySelectorAll("item,entry")].map(it=>({
+        title:(it.querySelector("title")?.textContent||"").trim(),
+        full:stripHtml((it.querySelector("content\\:encoded")?.textContent||it.querySelector("description")?.textContent||it.querySelector("summary")?.textContent||"").trim()),
+        time:(it.querySelector("pubDate")?.textContent||it.querySelector("updated")?.textContent||"")
+      }));
+    }catch(e){continue;}
   }
   return [];
 }
 
-async function loadAllFeeds(){
-  const t0 = performance.now();
-  $("#status").textContent = "جارٍ التحديث…";
-  let all = [];
-  let ok = 0;
-  for (const f of FEEDS) {
-    const items = await fetchViaProxies(f);
-    if (items.length) ok++;
-    // فلترة عربية وإزالة فراغات
-    all.push(...items.filter(i => (hasAr(i.title) || hasAr(i.full))));
+async function loadAll(){
+  let all=[];
+  for(const f of FEEDS){
+    const items=await fetchFeed(f);
+    all=[...all,...items.filter(i=>hasAr(i.title)||hasAr(i.full))];
   }
-  // إزالة التكرارات (عنوان + جزء من النص)
-  const seen = new Set(), uniq = [];
-  for (const it of all) {
-    const key = (it.title||"") + "|" + (it.full||"").slice(0,120);
-    if (seen.has(key)) continue;
-    seen.add(key); uniq.push(it);
+  // إزالة التكرار
+  const seen=new Set(),uniq=[];
+  for(const it of all){
+    const k=(it.title||"")+"|"+(it.full||"").slice(0,100);
+    if(seen.has(k)) continue;
+    seen.add(k); uniq.push(it);
   }
-  // ترتيب: الأحدث أولاً (عند توافر التاريخ) وإلا حسب الطول
-  uniq.sort((a,b) => {
-    const ad = Date.parse(a.time||"") || 0;
-    const bd = Date.parse(b.time||"") || 0;
-    if (bd !== ad) return bd - ad;
-    return (b.full||"").length - (a.full||"").length;
-  });
-
-  state.all = uniq;
-  state.page = 0;
-  render(true);
-
-  const ms = Math.round(performance.now() - t0);
-  $("#lastUpdated").textContent = `آخر تحديث: ${fmt(new Date())} • مصادر ناجحة: ${ok}/${FEEDS.length} • ~${ms}ms`;
+  // ترتيب بالأحدث ثم الطول
+  uniq.sort((a,b)=> (Date.parse(b.time)||0)-(Date.parse(a.time)||0) || ((b.full||"").length-(a.full||"").length) );
+  state.all=uniq; state.page=0; render(true);
 }
-
-/* =================== العرض =================== */
-const state = { all: [], page: 0, pageSize: 12 };
 
 function articleHTML(a){
-  return `
-    <article class="article">
-      <h3>${a.title||""}</h3>
-      <div class="text-xs text-slate-500 mb-2">${a.time ? fmt(a.time) : ""}</div>
-      <p>${a.full||""}</p>
-    </article>`;
+  return `<div class="article">
+    <h3>${a.title||""}</h3>
+    <div class="text-xs text-slate-500 mb-2">${a.time?fmt(a.time):""}</div>
+    <p>${a.full||""}</p>
+  </div>`;
+}
+function render(reset){
+  if(reset) state.page=0;
+  const end=(state.page+1)*state.pageSize;
+  const list=state.all.slice(0,end);
+  $("#newsList").innerHTML=list.map(articleHTML).join("");
+  $("#loadMore").disabled=end>=state.all.length;
 }
 
-function render(reset=false){
-  if (reset) state.page = 0;
-  const end = (state.page + 1) * state.pageSize;
-  const slice = state.all.slice(0, end);
-  $("#newsList").innerHTML = slice.map(articleHTML).join("");
-  $("#loadMore").disabled = end >= state.all.length;
-  $("#loadMore").textContent = end >= state.all.length ? "لا مزيد من الأخبار" : "تحميل المزيد";
-  $("#tickerTrack").textContent = slice.slice(0, 12).map(x=>x.title).join(" • ") || "مدار الخبر — أخبار عربية متجددة لحظة بلحظة…";
-}
+$("#loadMore").onclick=()=>{state.page++;render(false);}
+$("#year").textContent=new Date().getFullYear();
 
-/* =================== أحداث وتحديث دوري =================== */
-$("#loadMore").onclick = () => { state.page++; render(false); };
-$("#year").textContent = new Date().getFullYear();
-
-function startAutoRefresh(){
-  // تحديث تلقائي كل X دقائق
-  setInterval(loadAllFeeds, AUTO_REFRESH_MIN * 60 * 1000);
-}
-
-/* =================== تشغيل =================== */
+// تشغيل
 startClock();
-loadAllFeeds();
-startAutoRefresh();
+loadAll();
+setInterval(loadAll, AUTO_REFRESH_MIN*60*1000);
 </script>
 </body>
 </html>
