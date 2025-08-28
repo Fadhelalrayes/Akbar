@@ -19,6 +19,8 @@
     .more-btn svg{width:16px;height:16px}
     .dev-link{cursor:pointer;color:#0369a1;font-weight:600}
     .dev-link:hover{text-decoration:underline}
+    .btn{padding:.55rem .9rem;border-radius:12px;border:1px solid #e2e8f0;background:#fff;font-weight:600}
+    .btn-brand{background:#0ea5e9;color:#fff;border-color:transparent}
   </style>
 </head>
 <body>
@@ -32,8 +34,11 @@
         <div class="text-2xl font-extrabold bg-gradient-to-r from-sky-500 to-indigo-500 text-transparent bg-clip-text">مدار الخبر</div>
       </div>
     </div>
-    <!-- ساعة حية -->
-    <div class="clock text-sm px-2 py-1 rounded-lg bg-slate-100 text-slate-700" id="liveClock">--:--:--</div>
+    <!-- ساعة حية + تحديث الآن -->
+    <div class="flex items-center gap-2">
+      <div class="clock text-sm px-2 py-1 rounded-lg bg-slate-100 text-slate-700" id="liveClock">--:--:--</div>
+      <button id="refreshNow" class="btn">تحديث الآن</button>
+    </div>
   </div>
 </header>
 
@@ -41,6 +46,14 @@
 <main class="max-w-5xl mx-auto px-4 py-6">
   <div class="mb-4 text-[13px] text-sky-800 bg-sky-100 border border-sky-200 rounded-lg px-3 py-2">
     📡 يتم تحديث الأخبار تلقائيًا كل دقيقة
+  </div>
+
+  <!-- حالة عدم وجود بيانات -->
+  <div id="emptyState" class="hidden rounded-xl border border-slate-200 bg-white p-5 text-slate-600">
+    لم يتم جلب أي أخبار الآن. قد يكون السبب انقطاع مؤقّت من المصادر.
+    <div class="mt-3">
+      <button id="tryAgain" class="btn btn-brand">حاول مجددًا</button>
+    </div>
   </div>
 
   <div id="newsList" class="space-y-6"></div>
@@ -61,24 +74,24 @@
 </div>
 
 <script>
-// ===== إعدادات =====
-// وكالات تسمح عادةً بالجلب عبر بروكسي عام
+// ===== مصادر موثوقة وتعمل عادة مع بروكسيات نصّية =====
 const FEEDS = [
-  "https://feeds.bbci.co.uk/arabic/rss.xml",   // BBC Arabic
-  "https://www.france24.com/ar/rss",           // France24 Arabic
-  "https://arabic.cnn.com/rss",                // CNN Arabic
-  "https://arabic.rt.com/rss/"                 // RT Arabic
+  "https://feeds.bbci.co.uk/arabic/rss.xml",
+  "https://www.france24.com/ar/rss",
+  "https://arabic.cnn.com/rss",
+  "https://arabic.rt.com/rss/"
 ];
 
-// 3 بروكسيات احتياط لتفادي انقطاع أحدها
+// ===== بروكسيات نصّية (بدون rss2json) بالتتابع + مهلة =====
 const PROXIES = [
-  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, // JSON
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,           // XML
-  u => `https://corsproxy.io/?${encodeURIComponent(u)}`                         // XML
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  // r.jina.ai يعمل كقارئ محتوى؛ نلفّ الـ https عبر r.jina.ai ثانٍ لتجاوز القيود
+  u => `https://r.jina.ai/http://r.jina.ai/${encodeURIComponent(u)}`
 ];
 
-// تحديث تلقائي كل دقيقة
-const AUTO_REFRESH_MIN = 1;
+const FETCH_TIMEOUT_MS = 9000; // مهلة لكل محاولة
+const AUTO_REFRESH_MIN = 1;    // كل دقيقة
 
 const state={all:[],page:0,pageSize:10};
 const $=s=>document.querySelector(s);
@@ -100,67 +113,91 @@ function openWhatsApp(){
   window.open(link,"_blank","noopener");
 }
 
-async function fetchFeed(u){
+// fetch مع مهلة
+async function fetchWithTimeout(url, timeoutMs=FETCH_TIMEOUT_MS){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+  try{
+    const res = await fetch(url, {signal: ctrl.signal, cache: "no-store"});
+    clearTimeout(t);
+    if(!res.ok) throw new Error("bad status");
+    return await res.text();
+  }catch(e){
+    clearTimeout(t);
+    throw e;
+  }
+}
+
+// جلب عبر البروكسيات بالتتابع
+async function fetchViaProxies(url){
   for(const p of PROXIES){
     try{
-      const endpoint=p(u);
-      const res=await fetch(endpoint,{cache:"no-store"}); if(!res.ok) continue;
-
-      // rss2json يرجّع JSON
-      if(endpoint.includes("rss2json")){
-        const js=await res.json(); if(!js || !Array.isArray(js.items)) continue;
-        return js.items.map(it=>({
-          title:(it.title||"").trim(),
-          full: stripHtml((it.content||it.description||"").trim()),
-          time: it.pubDate || it.pubdate || ""
-        }));
-      }
-
-      // غير ذلك: XML
-      const txt=await res.text();
-      const doc=new DOMParser().parseFromString(txt,"text/xml");
-      return [...doc.querySelectorAll("item,entry")].map(it=>({
-        title:(it.querySelector("title")?.textContent||"").trim(),
-        full: stripHtml(
-          (it.querySelector("content\\:encoded")?.textContent ||
-           it.querySelector("description")?.textContent       ||
-           it.querySelector("summary")?.textContent           || "").trim()
-        ),
-        time:(it.querySelector("pubDate")?.textContent||it.querySelector("updated")?.textContent||"")
-      }));
-    }catch(e){ /* جرّب البروكسي التالي */ }
+      const txt = await fetchWithTimeout(p(url));
+      return txt;
+    }catch(e){
+      // جرّب التالي
+    }
   }
-  return [];
+  throw new Error("all proxies failed");
+}
+
+function parseRSS(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  const items = Array.from(doc.querySelectorAll("item,entry")).map(el=>{
+    const title=(el.querySelector("title")?.textContent||"").trim();
+    const full = stripHtml(
+      (el.querySelector("content\\:encoded")?.textContent ||
+       el.querySelector("description")?.textContent       ||
+       el.querySelector("summary")?.textContent           || "").trim()
+    );
+    const pub  =(el.querySelector("pubDate")?.textContent||el.querySelector("updated")?.textContent||"").trim();
+    return {title, full, time: pub};
+  }).filter(i => hasAr(i.title)||hasAr(i.full));
+  return items;
 }
 
 async function loadAll(){
+  $("#emptyState").classList.add("hidden");
   let all=[];
+  // نجلب المصادر بالتتابع لتخفيف الضغط ومنع الحظر
   for(const f of FEEDS){
-    const items=await fetchFeed(f);
-    all=[...all,...items.filter(i=>hasAr(i.title)||hasAr(i.full))];
+    try{
+      const xml = await fetchViaProxies(f);
+      const items = parseRSS(xml);
+      all = all.concat(items);
+    }catch(e){
+      console.warn("فشل جلب:", f);
+    }
   }
-  // إزالة التكرار (عنوان + أول 100 حرف)
-  const seen=new Set(),uniq=[];
+  // إزالة التكرار
+  const seen=new Set(), uniq=[];
   for(const it of all){
-    const key=(it.title||"")+"|"+(it.full||"").slice(0,100);
+    const key=(it.title||"")+"|"+(it.full||"").slice(0,120);
     if(seen.has(key)) continue;
     seen.add(key); uniq.push(it);
   }
-  // ترتيب بالأحدث
-  uniq.sort((a,b)=>(Date.parse(b.time)||0)-(Date.parse(a.time)||0));
-  state.all=uniq; state.page=0; render(true);
+  // ترتيب بالأحدث ثم الطول
+  uniq.sort((a,b)=> (Date.parse(b.time)||0)-(Date.parse(a.time)||0) || ((b.full||"").length-(a.full||"").length) );
+
+  state.all=uniq; state.page=0;
+  render(true);
+
+  // إن لم تصل أي أخبار، أظهر الرسالة
+  if(!state.all.length){
+    $("#emptyState").classList.remove("hidden");
+  }
 }
 
 // مقتطف + زر قراءة المزيد
 function excerpt(txt, limit=350){return (txt||"").length<=limit?txt:txt.slice(0,limit);}
 function articleHTML(a,expanded=false){
-  const full=a.full||"", id=btoa((a.title||"")+(a.time||"")).slice(0,12);
+  const full=a.full||"";
   const shown=expanded?full:excerpt(full);
   const moreLabel=expanded?"إخفاء":"قراءة المزيد";
   const icon=expanded
     ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg>`
     : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>`;
-  return `<article class="article" data-id="${id}">
+  return `<article class="article">
     <h3>${a.title||""}</h3>
     <div class="text-xs text-slate-500 mb-2">${a.time?fmt(a.time):""}</div>
     <p class="content" data-full="${encodeURIComponent(full)}" data-expanded="${expanded?'1':'0'}">${shown}</p>
@@ -176,30 +213,35 @@ function render(reset){
   $("#loadMore").disabled=end>=state.all.length;
 }
 
-// زر "قراءة المزيد"
 document.addEventListener("click",e=>{
-  const btn=e.target.closest("button.more-btn");if(!btn)return;
-  const art=btn.closest("article");const p=art.querySelector(".content");
-  const expanded=p.getAttribute("data-expanded")==="1";
-  const full=decodeURIComponent(p.getAttribute("data-full")||"");
-  if(expanded){
-    p.textContent=excerpt(full);
-    p.setAttribute("data-expanded","0");
-    btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg><span>قراءة المزيد</span>`;
-  }else{
-    p.textContent=full;
-    p.setAttribute("data-expanded","1");
-    btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg><span>إخفاء</span>`;
+  // زر "قراءة المزيد"
+  const btn=e.target.closest("button.more-btn");if(btn){
+    const art=btn.closest("article");const p=art.querySelector(".content");
+    const expanded=p.getAttribute("data-expanded")==="1";
+    const full=decodeURIComponent(p.getAttribute("data-full")||"");
+    if(expanded){
+      p.textContent=excerpt(full);
+      p.setAttribute("data-expanded","0");
+      btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg><span>قراءة المزيد</span>`;
+    }else{
+      p.textContent=full;
+      p.setAttribute("data-expanded","1");
+      btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg><span>إخفاء</span>`;
+    }
   }
 });
 
-$("#loadMore").onclick=()=>{state.page++;render(false);}
+// أزرار
+$("#loadMore").onclick=()=>{state.page++;render(false);};
+$("#refreshNow").onclick=()=>loadAll();
+$("#tryAgain").onclick=()=>loadAll();
+
 $("#year").textContent=new Date().getFullYear();
 
 // تشغيل
 startClock();
 loadAll();
-setInterval(loadAll,AUTO_REFRESH_MIN*60*1000);
+setInterval(loadAll, AUTO_REFRESH_MIN*60*1000);
 </script>
 </body>
 </html>
