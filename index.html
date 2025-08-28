@@ -62,23 +62,22 @@
 
 <script>
 // ===== إعدادات =====
+// وكالات تسمح عادةً بالجلب عبر بروكسي عام
 const FEEDS = [
-  // بحرينية
-  "https://feeds.feedburner.com/alayam-news-list-all",
-  "https://alwatannews.net/rssFeed/0",
-  "https://bahrainmirror.com/rss.xml",
-  // عربية عامة
-  "https://www.aljazeera.net/xml/rss/all.xml",
-  "https://www.alarabiya.net/.mrss/ar.xml",
-  "https://feeds.bbci.co.uk/arabic/rss.xml",
-  "https://www.france24.com/ar/rss",
-  "https://arabic.cnn.com/rss",
-  "https://arabic.rt.com/rss/"
+  "https://feeds.bbci.co.uk/arabic/rss.xml",   // BBC Arabic
+  "https://www.france24.com/ar/rss",           // France24 Arabic
+  "https://arabic.cnn.com/rss",                // CNN Arabic
+  "https://arabic.rt.com/rss/"                 // RT Arabic
 ];
+
+// 3 بروكسيات احتياط لتفادي انقطاع أحدها
 const PROXIES = [
-  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
-  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+  u => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`, // JSON
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,           // XML
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`                         // XML
 ];
+
+// تحديث تلقائي كل دقيقة
 const AUTO_REFRESH_MIN = 1;
 
 const state={all:[],page:0,pageSize:10};
@@ -104,23 +103,32 @@ function openWhatsApp(){
 async function fetchFeed(u){
   for(const p of PROXIES){
     try{
-      const res=await fetch(p(u),{cache:"no-store"});if(!res.ok) continue;
-      if(p(u).includes("rss2json")){
-        const js=await res.json();if(!js.items) continue;
-        return js.items.map(it=>({title:it.title,full:stripHtml(it.content||it.description||""),time:it.pubDate}));
+      const endpoint=p(u);
+      const res=await fetch(endpoint,{cache:"no-store"}); if(!res.ok) continue;
+
+      // rss2json يرجّع JSON
+      if(endpoint.includes("rss2json")){
+        const js=await res.json(); if(!js || !Array.isArray(js.items)) continue;
+        return js.items.map(it=>({
+          title:(it.title||"").trim(),
+          full: stripHtml((it.content||it.description||"").trim()),
+          time: it.pubDate || it.pubdate || ""
+        }));
       }
+
+      // غير ذلك: XML
       const txt=await res.text();
       const doc=new DOMParser().parseFromString(txt,"text/xml");
       return [...doc.querySelectorAll("item,entry")].map(it=>({
         title:(it.querySelector("title")?.textContent||"").trim(),
-        full:stripHtml(
+        full: stripHtml(
           (it.querySelector("content\\:encoded")?.textContent ||
-           it.querySelector("description")?.textContent ||
-           it.querySelector("summary")?.textContent || "").trim()
+           it.querySelector("description")?.textContent       ||
+           it.querySelector("summary")?.textContent           || "").trim()
         ),
         time:(it.querySelector("pubDate")?.textContent||it.querySelector("updated")?.textContent||"")
       }));
-    }catch(e){continue;}
+    }catch(e){ /* جرّب البروكسي التالي */ }
   }
   return [];
 }
@@ -131,23 +139,27 @@ async function loadAll(){
     const items=await fetchFeed(f);
     all=[...all,...items.filter(i=>hasAr(i.title)||hasAr(i.full))];
   }
+  // إزالة التكرار (عنوان + أول 100 حرف)
   const seen=new Set(),uniq=[];
   for(const it of all){
     const key=(it.title||"")+"|"+(it.full||"").slice(0,100);
     if(seen.has(key)) continue;
     seen.add(key); uniq.push(it);
   }
+  // ترتيب بالأحدث
   uniq.sort((a,b)=>(Date.parse(b.time)||0)-(Date.parse(a.time)||0));
   state.all=uniq; state.page=0; render(true);
 }
 
 // مقتطف + زر قراءة المزيد
-function excerpt(txt, limit=350){return txt.length<=limit?txt:txt.slice(0,limit);}
+function excerpt(txt, limit=350){return (txt||"").length<=limit?txt:txt.slice(0,limit);}
 function articleHTML(a,expanded=false){
   const full=a.full||"", id=btoa((a.title||"")+(a.time||"")).slice(0,12);
   const shown=expanded?full:excerpt(full);
   const moreLabel=expanded?"إخفاء":"قراءة المزيد";
-  const icon=expanded?`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg>`:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>`;
+  const icon=expanded
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 15l-6-6-6 6"/></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6"/></svg>`;
   return `<article class="article" data-id="${id}">
     <h3>${a.title||""}</h3>
     <div class="text-xs text-slate-500 mb-2">${a.time?fmt(a.time):""}</div>
@@ -155,6 +167,7 @@ function articleHTML(a,expanded=false){
     ${(full.length>350)?`<button class="more-btn mt-3" data-act="toggle">${icon}<span>${moreLabel}</span></button>`:""}
   </article>`;
 }
+
 function render(reset){
   if(reset) state.page=0;
   const end=(state.page+1)*state.pageSize;
